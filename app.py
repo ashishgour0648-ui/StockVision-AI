@@ -1,15 +1,20 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import joblib
 import json
 import os
-import matplotlib.pyplot as plt
+import zipfile
+import glob
+import warnings
+
 from tensorflow.keras.models import load_model
 
+warnings.filterwarnings("ignore")
+
 # ==========================================
-# STOCKVISION AI - STOCK PRICE PREDICTION SYSTEM
+# STOCKVISION AI - MULTI COMPANY SYSTEM
 # ==========================================
 
 st.set_page_config(
@@ -18,341 +23,407 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom design
-st.markdown("""
-<style>
-.main {
-    background-color: #0e1117;
-}
-h1, h2, h3 {
-    color: #00d4ff;
-}
-.stMetric {
-    background-color: #1b2430;
-    padding: 15px;
-    border-radius: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
+st.title("📈 StockVision AI")
+st.subheader("Multi-Company Stock Price Prediction System")
+st.markdown(
+    "Machine Learning based stock analysis using Random Forest and LSTM."
+)
+
+PACKAGE_NAME = "StockVision_AI_MultiCompany_Package.zip"
+ARTIFACT_DIR = "/tmp/stockvision_artifacts"
 
 # ==========================================
-# LOAD TRAINED MODELS
+# LOAD PACKAGE
 # ==========================================
 
 @st.cache_resource
-def load_models():
-    rf_model = joblib.load("random_forest_model[1].pkl")
-    lstm_model = load_model("lstm_model[1].keras")
-    scaler = joblib.load("lstm_scaler[1].pkl")
+def load_artifacts():
 
-    with open("rf_features[1].json", "r") as file:
-        features = json.load(file)
+    zip_files = glob.glob(f"/mount/src/**/{PACKAGE_NAME}", recursive=True)
 
-    return rf_model, lstm_model, scaler, features
+    if not zip_files:
+        zip_files = glob.glob(f"/**/{PACKAGE_NAME}", recursive=True)
 
+    if not zip_files:
+        raise FileNotFoundError(
+            f"{PACKAGE_NAME} repository mein nahi mili. "
+            "Check karo ki ZIP GitHub par upload hui hai."
+        )
 
-st.title("📈 StockVision AI")
-st.subheader("Stock Price Prediction System Using Machine Learning")
+    zip_path = zip_files[0]
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
 
-st.write(
-    "Predict stock prices using Random Forest and LSTM machine learning models."
-)
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(ARTIFACT_DIR)
 
-st.info(
-    "This project uses models trained on historical RELIANCE data. "
-    "Predictions are experimental estimates, not guaranteed market forecasts."
-)
+    rf_model = joblib.load(
+        os.path.join(ARTIFACT_DIR, "multi_company_rf_model.pkl")
+    )
 
-# ==========================================
-# LOAD MODELS SAFELY
-# ==========================================
+    with open(
+        os.path.join(ARTIFACT_DIR, "multi_company_rf_features.json"),
+        "r"
+    ) as f:
+        feature_info = json.load(f)
 
-try:
-    rf_model, lstm_model, scaler, features = load_models()
-    st.success("Both trained models loaded successfully!")
-
-except Exception as error:
-    st.error("Model loading failed. Please check the model files and requirements.")
-    st.code(str(error))
-    st.stop()
-
-# ==========================================
-# SIDEBAR
-# ==========================================
-
-st.sidebar.title("⚙️ Settings")
-st.sidebar.write("StockVision AI Dashboard")
-
-st.sidebar.markdown("---")
-st.sidebar.write("**Available Models**")
-st.sidebar.write("🌲 Random Forest")
-st.sidebar.write("🧠 LSTM Neural Network")
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Developed as a BCA Major Project")
-
-# ==========================================
-# UPLOAD STOCK DATA
-# ==========================================
-
-st.header("📂 Upload Stock Dataset")
-
-uploaded_file = st.file_uploader(
-    "Upload CSV or Excel stock data",
-    type=["csv", "xlsx", "xls"]
-)
-
-if uploaded_file is None:
-    st.warning("Please upload a stock dataset to start prediction.")
-    st.stop()
-
-try:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+    if isinstance(feature_info, list):
+        rf_features = feature_info
     else:
-        df = pd.read_excel(uploaded_file)
+        rf_features = (
+            feature_info.get("features")
+            or feature_info.get("feature_names")
+            or feature_info.get("columns")
+        )
 
-except Exception as error:
-    st.error("Unable to read the uploaded file.")
-    st.code(str(error))
-    st.stop()
+    if not rf_features:
+        raise ValueError("RF feature names JSON mein nahi mile.")
 
-# ==========================================
-# DATA CLEANING
-# ==========================================
+    lstm_model = load_model(
+        os.path.join(ARTIFACT_DIR, "multi_company_lstm_model.keras"),
+        compile=False
+    )
 
-df.columns = df.columns.str.strip()
+    x_scaler = joblib.load(
+        os.path.join(ARTIFACT_DIR, "multi_company_lstm_X_scaler.pkl")
+    )
 
-required_columns = [
-    "Date", "Open", "High", "Low", "Close", "Volume"
-]
+    y_scaler = joblib.load(
+        os.path.join(ARTIFACT_DIR, "multi_company_lstm_y_scaler.pkl")
+    )
 
-missing_columns = [
-    col for col in required_columns if col not in df.columns
-]
+    data = pd.read_csv(
+        os.path.join(
+            ARTIFACT_DIR,
+            "StockVision_All_Companies_Cleaned.csv"
+        )
+    )
 
-if missing_columns:
-    st.error("Missing required columns: " + ", ".join(missing_columns))
-    st.stop()
+    comparison = pd.read_csv(
+        os.path.join(
+            ARTIFACT_DIR,
+            "StockVision_Model_Comparison.csv"
+        )
+    )
 
-df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    data["Date"] = pd.to_datetime(data["Date"])
+    data["Symbol"] = data["Symbol"].astype(str)
 
-for col in ["Open", "High", "Low", "Close", "Volume"]:
-    df[col] = pd.to_numeric(df[col], errors="coerce")
+    return (
+        rf_model,
+        rf_features,
+        lstm_model,
+        x_scaler,
+        y_scaler,
+        data,
+        comparison
+    )
 
-df = df.dropna(subset=required_columns)
-df = df.sort_values("Date").drop_duplicates(subset="Date")
-df = df.reset_index(drop=True)
-
-if len(df) < 210:
-    st.error("Please upload at least 210 valid daily stock records.")
-    st.stop()
 
 # ==========================================
 # FEATURE ENGINEERING
 # ==========================================
 
-data = df.copy()
+def create_features(company_data):
 
-data["Return"] = data["Close"].pct_change()
+    df = company_data.copy()
+    df = df.sort_values("Date").reset_index(drop=True)
 
-for lag in [1, 2, 3, 5, 10]:
-    data[f"Return_Lag_{lag}"] = data["Return"].shift(lag)
+    df["Return"] = np.log(df["Close"] / df["Close"].shift(1))
 
-for lag in [1, 2, 3, 5]:
-    data[f"Close_Lag_{lag}"] = data["Close"].shift(lag)
+    for lag in [1, 2, 3, 5, 10]:
+        df[f"Return_Lag_{lag}"] = df["Return"].shift(lag)
 
-for window in [5, 20, 50]:
-    moving_average = data["Close"].rolling(window).mean()
-    data[f"MA_{window}_Ratio"] = data["Close"] / moving_average
+    for window in [5, 10, 20, 50]:
+        moving_average = df["Close"].rolling(window).mean()
+        ratio = df["Close"] / moving_average
+        df[f"MA_Ratio_{window}"] = ratio
+        df[f"Close_MA_Ratio_{window}"] = ratio
 
-for window in [5, 10, 20]:
-    data[f"Volatility_{window}"] = (
-        data["Return"].rolling(window).std()
-    )
+    for window in [5, 10, 20]:
+        volatility = df["Return"].rolling(window).std()
+        df[f"Volatility_{window}"] = volatility
 
-data["Volume_Change"] = data["Volume"].pct_change()
+    df["Volume_Change"] = df["Volume"].pct_change()
+    volume_average = df["Volume"].rolling(20).mean()
+    df["Volume_MA_Ratio"] = df["Volume"] / volume_average
 
-data["Volume_MA_5"] = data["Volume"].rolling(5).mean()
+    df["Daily_Range"] = (df["High"] - df["Low"]) / df["Close"]
+    df["Open_Close_Ratio"] = df["Open"] / df["Close"]
 
-data["Daily_Range"] = (
-    data["High"] - data["Low"]
-) / data["Close"]
+    return df.replace([np.inf, -np.inf], np.nan)
 
-data["Open_Close_Ratio"] = (
-    data["Open"] / data["Close"]
-)
 
-data = data.replace([np.inf, -np.inf], np.nan)
-data = data.dropna().reset_index(drop=True)
+# ==========================================
+# LOAD DATA AND MODELS
+# ==========================================
 
-if data.empty:
-    st.error("Not enough valid data after feature calculation.")
+try:
+    (
+        rf_model,
+        rf_features,
+        lstm_model,
+        x_scaler,
+        y_scaler,
+        all_data,
+        comparison
+    ) = load_artifacts()
+
+except Exception as e:
+    st.error(f"System loading error: {e}")
     st.stop()
 
-# ==========================================
-# STOCK INFORMATION
-# ==========================================
-
-latest = data.iloc[-1]
-latest_close = float(latest["Close"])
-latest_date = latest["Date"]
-
-st.header("📊 Stock Information")
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Latest Closing Price", f"₹ {latest_close:,.2f}")
-col2.metric("Latest Available Date", str(latest_date.date()))
-col3.metric("Total Records", f"{len(data):,}")
 
 # ==========================================
-# STOCK PRICE CHART
+# COMPANY SELECTION
 # ==========================================
 
-st.header("📉 Historical Stock Price")
+companies = sorted(all_data["Symbol"].dropna().unique())
 
-fig, ax = plt.subplots(figsize=(12, 4))
-ax.plot(data["Date"], data["Close"], label="Closing Price")
-ax.set_xlabel("Date")
-ax.set_ylabel("Price (₹)")
-ax.set_title("Historical Closing Price")
-ax.legend()
-ax.grid(alpha=0.3)
+st.sidebar.header("⚙️ Stock Selection")
 
-st.pyplot(fig)
-plt.close(fig)
+selected_company = st.sidebar.selectbox(
+    "Select Company",
+    companies
+)
+
+company_data = all_data[
+    all_data["Symbol"] == selected_company
+].copy()
+
+company_data = company_data.sort_values("Date").reset_index(drop=True)
+
+if company_data.empty:
+    st.error("Selected company ka data nahi mila.")
+    st.stop()
+
+
+# ==========================================
+# COMPANY INFORMATION
+# ==========================================
+
+latest_date = company_data["Date"].iloc[-1]
+latest_close = float(company_data["Close"].iloc[-1])
+
+st.markdown("---")
+st.header(f"📊 {selected_company} Stock Analysis")
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("Company", selected_company)
+c2.metric("Latest Historical Close", f"₹{latest_close:,.2f}")
+c3.metric("Latest Data Date", latest_date.strftime("%d-%m-%Y"))
+
+st.info(
+    "Important: Is project ka historical dataset 01 October 2020 tak hai. "
+    "Ye live market data nahi hai. Predictions educational and experimental "
+    "estimates hain, investment advice nahi."
+)
+
 
 # ==========================================
 # RANDOM FOREST PREDICTION
 # ==========================================
 
-st.header("🌲 Random Forest Prediction")
+feature_data = create_features(company_data)
+valid_features = feature_data.dropna().copy()
 
-try:
-    rf_input = data[features].iloc[[-1]]
-
-    predicted_return = float(
-        rf_model.predict(rf_input)[0]
-    )
-
-    rf_prediction = latest_close * np.exp(predicted_return)
-
-    st.metric(
-        "Random Forest Estimated Next Close",
-        f"₹ {rf_prediction:,.2f}"
-    )
-
-except Exception as error:
-    st.error("Random Forest prediction failed.")
-    st.code(str(error))
+if valid_features.empty:
+    st.error("Prediction ke liye sufficient historical data nahi hai.")
     st.stop()
+
+latest_row = valid_features.iloc[[-1]].copy()
+
+# Create Symbol one-hot columns
+symbol_data = pd.DataFrame({"Symbol": [selected_company]})
+symbol_encoded = pd.get_dummies(symbol_data, columns=["Symbol"])
+
+# Combine engineered values and company encoding
+rf_input = pd.concat(
+    [
+        latest_row.drop(columns=["Date", "Symbol"], errors="ignore"),
+        symbol_encoded
+    ],
+    axis=1
+)
+
+# Match the exact feature order used during training
+rf_input = rf_input.reindex(
+    columns=rf_features,
+    fill_value=0
+)
+
+rf_return = float(rf_model.predict(rf_input)[0])
+rf_prediction = latest_close * np.exp(rf_return)
+
 
 # ==========================================
 # LSTM PREDICTION
 # ==========================================
 
-st.header("🧠 LSTM Prediction")
+lstm_prediction = None
+lstm_error = None
 
 try:
-    last_60_prices = data["Close"].values[-60:].reshape(-1, 1)
+    returns = np.log(
+        company_data["Close"] / company_data["Close"].shift(1)
+    ).dropna().values
 
-    scaled_prices = scaler.transform(last_60_prices)
+    if len(returns) < 30:
+        raise ValueError("LSTM ke liye 30 days ka data required hai.")
 
-    lstm_input = scaled_prices.reshape(1, 60, 1)
+    last_sequence = returns[-30:].reshape(-1, 1)
 
-    lstm_scaled_prediction = lstm_model.predict(
-        lstm_input, verbose=0
+    scaled_sequence = x_scaler.transform(last_sequence)
+    scaled_sequence = scaled_sequence.reshape(1, 30, 1)
+
+    scaled_prediction = lstm_model.predict(
+        scaled_sequence,
+        verbose=0
     )
 
-    lstm_prediction = float(
-        scaler.inverse_transform(lstm_scaled_prediction)[0][0]
-    )
+    predicted_return = y_scaler.inverse_transform(
+        scaled_prediction.reshape(-1, 1)
+    )[0][0]
 
-    st.metric(
-        "LSTM Estimated Next Close",
-        f"₹ {lstm_prediction:,.2f}"
-    )
+    lstm_prediction = latest_close * np.exp(float(predicted_return))
 
-except Exception as error:
-    st.error("LSTM prediction failed.")
-    st.code(str(error))
-    st.stop()
+except Exception as e:
+    lstm_error = str(e)
+
+
+# ==========================================
+# PREDICTION RESULTS
+# ==========================================
+
+st.markdown("---")
+st.header("🤖 Next Trading Day Prediction")
+
+p1, p2, p3 = st.columns(3)
+
+p1.metric(
+    "Random Forest Prediction",
+    f"₹{rf_prediction:,.2f}"
+)
+
+if lstm_prediction is not None:
+    p2.metric(
+        "LSTM Prediction",
+        f"₹{lstm_prediction:,.2f}"
+    )
+else:
+    p2.metric("LSTM Prediction", "Not Available")
+
+p3.metric(
+    "Baseline (No Change)",
+    f"₹{latest_close:,.2f}"
+)
+
+if lstm_error:
+    st.warning(f"LSTM prediction available nahi hui: {lstm_error}")
+
+if lstm_prediction is not None:
+    difference = abs(rf_prediction - lstm_prediction)
+    st.write(f"**RF aur LSTM prediction difference:** ₹{difference:,.2f}")
+
+
+# ==========================================
+# HISTORICAL STOCK CHART
+# ==========================================
+
+st.markdown("---")
+st.header("📈 Historical Stock Price Chart")
+
+chart_data = company_data.tail(250)
+
+fig, ax = plt.subplots(figsize=(13, 5))
+ax.plot(
+    chart_data["Date"],
+    chart_data["Close"],
+    label="Historical Closing Price"
+)
+ax.set_xlabel("Date")
+ax.set_ylabel("Closing Price (₹)")
+ax.set_title(f"{selected_company} Historical Stock Price")
+ax.legend()
+ax.grid(True)
+
+st.pyplot(fig)
+plt.close(fig)
+
 
 # ==========================================
 # MODEL COMPARISON
 # ==========================================
 
-st.header("⚖️ Model Comparison")
+st.markdown("---")
+st.header("🏆 Model Performance Comparison")
 
-difference = abs(rf_prediction - lstm_prediction)
+company_comparison = comparison[
+    comparison["Company"].astype(str) == selected_company
+]
 
-col1, col2, col3 = st.columns(3)
+if not company_comparison.empty:
 
-col1.metric("Random Forest", f"₹ {rf_prediction:,.2f}")
-col2.metric("LSTM", f"₹ {lstm_prediction:,.2f}")
-col3.metric("Prediction Difference", f"₹ {difference:,.2f}")
+    st.dataframe(
+        company_comparison,
+        use_container_width=True,
+        hide_index=True
+    )
 
-comparison = pd.DataFrame({
-    "Model": ["Random Forest", "LSTM"],
-    "Estimated Next Close (₹)": [
-        rf_prediction,
-        lstm_prediction
-    ]
-})
+    st.caption(
+        "MAE (Mean Absolute Error) jitna kam hota hai, "
+        "test data par prediction error utna kam hota hai."
+    )
 
-st.dataframe(comparison, use_container_width=True)
+else:
+    st.info("Is company ka comparison record available nahi hai.")
 
-fig, ax = plt.subplots(figsize=(8, 4))
-
-ax.bar(
-    comparison["Model"],
-    comparison["Estimated Next Close (₹)"]
-)
-
-ax.set_ylabel("Estimated Price (₹)")
-ax.set_title("Model Prediction Comparison")
-ax.grid(axis="y", alpha=0.3)
-
-st.pyplot(fig)
-plt.close(fig)
 
 # ==========================================
-# DOWNLOAD RESULTS
-# ==========================================
-
-st.header("📥 Download Prediction Report")
-
-report = pd.DataFrame({
-    "Model": ["Random Forest", "LSTM"],
-    "Latest Dataset Date": [str(latest_date.date())] * 2,
-    "Latest Closing Price": [latest_close] * 2,
-    "Estimated Next Close": [
-        rf_prediction,
-        lstm_prediction
-    ]
-})
-
-csv_data = report.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    label="Download Prediction Report (CSV)",
-    data=csv_data,
-    file_name="StockVision_AI_Predictions.csv",
-    mime="text/csv"
-)
-
-# ==========================================
-# DISCLAIMER
+# HISTORICAL DATA TABLE
 # ==========================================
 
 st.markdown("---")
+st.header("📋 Historical Data")
 
-st.caption(
-    "Disclaimer: StockVision AI is an educational machine learning project. "
-    "Predictions are experimental and should not be used as financial advice."
+st.dataframe(
+    company_data.tail(20).sort_values(
+        "Date",
+        ascending=False
+    ),
+    use_container_width=True,
+    hide_index=True
 )
 
-st.markdown(
-    "**StockVision AI | Machine Learning Project**"
+
+# ==========================================
+# DOWNLOAD REPORT
+# ==========================================
+
+st.markdown("---")
+st.header("⬇️ Download Report")
+
+report = pd.DataFrame({
+    "Company": [selected_company],
+    "Latest Historical Date": [latest_date.strftime("%Y-%m-%d")],
+    "Latest Historical Close": [latest_close],
+    "Random Forest Estimate": [rf_prediction],
+    "LSTM Estimate": [
+        lstm_prediction if lstm_prediction is not None else np.nan
+    ],
+    "Baseline Estimate": [latest_close],
+    "Dataset Type": ["Historical data ending 2020-10-01"]
+})
+
+st.download_button(
+    label="📥 Download Prediction Report (CSV)",
+    data=report.to_csv(index=False).encode("utf-8"),
+    file_name=f"StockVision_{selected_company}_Report.csv",
+    mime="text/csv"
+)
+
+st.markdown("---")
+st.caption(
+    "StockVision AI | BCA Major Project | "
+    "Machine Learning: Random Forest + LSTM"
 )
