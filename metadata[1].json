@@ -1,0 +1,9 @@
+{
+    "project_name": "StockVision AI",
+    "company": "RELIANCE",
+    "latest_dataset_date": "2020-10-01",
+    "latest_closing_price": 2225.25,
+    "random_forest_prediction": 2003.1678342884268,
+    "lstm_prediction": 2084.65771484375,
+    "prediction_note": "Experimental estimates based on historical data"
+}
